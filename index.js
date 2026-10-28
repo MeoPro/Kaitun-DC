@@ -57,7 +57,7 @@ function saveState() {
   fs.writeFileSync(tmp, JSON.stringify(state, null, 2), "utf8");
   fs.renameSync(tmp, STATE_FILE);
 }
-function makeKey(targetId, username) { return `${targetId}:${username.trim().toLowerCase()}`; }
+function makeKey(targetId, username) { return username.trim().toLowerCase(); }
 function getAccountsForTarget(targetId) {
   return Object.entries(state.accounts).filter(([, a]) => a.targetId === targetId);
 }
@@ -177,13 +177,13 @@ function getProgressStatus(text, labels) {
     const colon = line.match(/^\s*(.*?)\s*[:：]\s*(.*?)\s*$/);
     if (colon && wanted.includes(normalizeLabel(colon[1]))) {
       const v = `${colon[2]} ${line}`;
-      if (/obtained|owned|have|yes|true|✅/i.test(v)) return "Obtained";
       if (/missing|not obtained|no\b|false|❌/i.test(v)) return "Missing";
+      if (/obtained|owned|have|yes|true|✅/i.test(v)) return "Obtained";
     }
     if (wanted.some(w => normalizeLabel(line).startsWith(w))) {
       const v = lines.slice(i, Math.min(i + 2, lines.length)).join(" ");
-      if (/obtained|owned|have|yes|true|✅/i.test(v)) return "Obtained";
       if (/missing|not obtained|no\b|false|❌/i.test(v)) return "Missing";
+      if (/obtained|owned|have|yes|true|✅/i.test(v)) return "Obtained";
     }
   }
   return "Unknown";
@@ -217,6 +217,14 @@ function parseLevel(text) {
   if (!m) return { display: raw, level: null };
   const level = Number(m[0].replace(/,/g, ""));
   return { display: `${level.toLocaleString("en-US")}${level >= 2800 ? " ✅" : ""}`, level };
+}
+function isAccountComplete(text) {
+  const { level } = parseLevel(text);
+  const status = getValue(text, ["Current Status", "Current Task", "Task"]);
+  return level >= 2800 &&
+    getProgressStatus(text, ["Godhuman"]) === "Obtained" &&
+    getProgressStatus(text, ["Skull Guitar"]) === "Obtained" &&
+    /\b(?:farming|mastery\s+farm(?:ing|img))\b/i.test(status);
 }
 function parseRace(text) {
   const separate = getValue(text, ["Race"]);
@@ -413,7 +421,19 @@ async function sendAccountEmbed(account, text, routeName, timestamp) {
   account.disconnected = false;
   account.disconnectedAt = null;
   saveState();
+  await notifyIfCompleted(account, text, channel);
   return sent;
+}
+async function notifyIfCompleted(account, text, channel) {
+  if (account.completedNotified || !isAccountComplete(text)) return;
+  const status = getValue(text, ["Current Status", "Current Task", "Task"]);
+  await channel.send({
+    content: `✅ **${account.username} SELESAI**\nLevel 2800+, Godhuman, Skull Guitar, status: **${status}**`,
+    allowedMentions: { parse: [] },
+  });
+  account.completedNotified = true;
+  saveState();
+  console.log(`[COMPLETED] ${account.username}`);
 }
 async function updateExistingAccount(key, account, route, text, timestamp) {
   const channel = await getTargetChannel(account.targetId);
@@ -428,6 +448,7 @@ async function updateExistingAccount(key, account, route, text, timestamp) {
     account.disconnectedAt = null;
     account.sourceId = route.source;
     saveState();
+    await notifyIfCompleted(account, text, channel);
   } else {
     account.lastSeen = Date.now();
     account.disconnected = false;
